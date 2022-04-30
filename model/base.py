@@ -14,6 +14,7 @@ from easydict import EasyDict as edict
 
 import util
 import util_vis
+from ipdb import set_trace
 from util import log, debug
 
 # ============================ main engine for training and evaluation ============================
@@ -137,7 +138,6 @@ class Model():
         if (self.it+1) % opt.freq.scalar == 0:
             self.log_scalars(opt, var, loss, step=self.it+1, split="train")
         if self.it == 0:
-            # Only log the training RGB images once (on the first iteration).
             self.visualize(opt, var, step=self.it+1, split="train")
         self.it += 1
         loader.set_postfix(it=self.it, loss="{:.3f}".format(loss.all))
@@ -174,8 +174,8 @@ class Model():
                 loss_val.setdefault(key, 0.)
                 loss_val[key] += loss[key]*len(var.idx)
             loader.set_postfix(loss="{:.3f}".format(loss.all))
-            if it == 0:
-                self.visualize(opt, var, step=ep, split="val")
+            if it < opt.freq.val_n_log:
+                self.visualize(opt, var, step=ep, split="val", val_idx=it)
         for key in loss_val:
             loss_val[key] /= len(self.test_data)
         self.log_scalars(opt, var, loss_val, step=ep, split="val")
@@ -193,7 +193,7 @@ class Model():
                 self.tb.add_scalar("{0}/{1}".format(split, key), value, step)
 
     @torch.no_grad()
-    def visualize(self, opt, var, step=0, split="train"):
+    def visualize(self, opt, var, step=0, split="train", val_idx=0):
         raise NotImplementedError
 
     def save_checkpoint(self, opt, ep=0, it=0, latest=False):

@@ -42,7 +42,14 @@ class Dataset(base.Dataset):
             self.list.append({'file_path': fpath, 'transform_matrix': tfmat})
         self.focal = 610
         if subset:
-            self.list = self.list[:subset]
+            if split == 'val':
+                # Split the list into N+1 even pieces and then select a validation image at each
+                # splitting point.
+                val_spacing = len(self.list) // (subset + 1)
+                val_idxs = (np.arange(1, subset + 1) * val_spacing).tolist()
+                self.list = [self.list[idx] for idx in val_idxs]
+            else:
+                self.list = self.list[:subset]
         if downsample:
             self.list = self.list[::downsample]
         # preload dataset

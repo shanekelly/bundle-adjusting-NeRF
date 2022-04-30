@@ -57,4 +57,5 @@ freq:                                                       # periodic actions d
     scalar: 200                                             # log losses and scalar states (every N iterations)
     vis: 1000                                               # visualize results (every N iterations)
     val: 20                                                 # validate on val set (every N epochs)
+    val_n_log: 1                                            # log up to N val results to tensorboard
     ckpt: 50                                                # save checkpoint (every N epochs)

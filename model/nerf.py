@@ -100,19 +100,21 @@ class Model(base.Model):
             self.tb.add_scalar("{0}/{1}".format(split, "PSNR_fine"), psnr, step)
 
     @torch.no_grad()
-    def visualize(self, opt, var, step=0, split="train", eps=1e-10):
+    def visualize(self, opt, var, step=0, split="train", eps=1e-10, val_idx=0):
         if opt.tb:
-            if step == 0:
+            if step == 0 or (split == "train" and step == 1):
                 # Only log the groundtruth RGB image once (on the first iteration).
-                util_vis.tb_image(opt, self.tb, step, split, "rgb/gt", var.image)
+                util_vis.tb_image(opt, self.tb, step, split, f"{val_idx}/rgb/gt", var.image)
             if not opt.nerf.rand_rays or split != "train":
                 invdepth = (1-var.depth)/var.opacity if opt.camera.ndc else 1 / \
                     (var.depth/var.opacity+eps)
                 rgb_map = var.rgb.view(-1, opt.H, opt.W, 3).permute(0, 3, 1, 2)  # [B,3,H,W]
                 invdepth_map = invdepth.view(-1, opt.H, opt.W, 1).permute(0, 3, 1, 2)  # [B,1,H,W]
-                util_vis.tb_image(opt, self.tb, step, split, "rgb/render", rgb_map)
-                util_vis.tb_image(opt, self.tb, step, split, "invdepth/render", invdepth_map)
-                util_vis.tb_image(opt, self.tb, step, split, "depth/render", 1/invdepth_map)
+                util_vis.tb_image(opt, self.tb, step, split, f"{val_idx}/rgb/render", rgb_map)
+                util_vis.tb_image(opt, self.tb, step, split, f"{val_idx}/invdepth/render",
+                                  invdepth_map)
+                util_vis.tb_image(opt, self.tb, step, split, f"{val_idx}/depth/render",
+                                  1/invdepth_map)
 
                 if opt.freq.val_ptclds:
                     # Save the RGB and depth renderings as a point cloud in the output directory.
@@ -121,7 +123,7 @@ class Model(base.Model):
                     point_cloud_from_rgb_img_and_depth_img(
                         rgb_map.squeeze().permute(1, 2, 0), (1 / invdepth_map).squeeze(),
                         var.pose.squeeze(), var.intr.squeeze(),
-                        output_fpath=f'{ptcld_dpath}/ptcld_{step:06d}.ply')
+                        output_fpath=f'{ptcld_dpath}/ptcld_{val_idx}_{step:06d}.ply')
 
                 if opt.nerf.fine_sampling:
                     invdepth = (1-var.depth_fine)/var.opacity_fine if opt.camera.ndc else 1 / \
@@ -130,8 +132,9 @@ class Model(base.Model):
                                                 3).permute(0, 3, 1, 2)  # [B,3,H,W]
                     invdepth_map = invdepth.view(-1, opt.H, opt.W,
                                                  1).permute(0, 3, 1, 2)  # [B,1,H,W]
-                    util_vis.tb_image(opt, self.tb, step, split, "rgb_fine", rgb_map)
-                    util_vis.tb_image(opt, self.tb, step, split, "invdepth_fine", invdepth_map)
+                    util_vis.tb_image(opt, self.tb, step, split, f"{val_idx}/rgb_fine", rgb_map)
+                    util_vis.tb_image(opt, self.tb, step, split, f"{val_idx}/invdepth_fine",
+                                      invdepth_map)
 
     @torch.no_grad()
     def get_all_training_poses(self, opt):

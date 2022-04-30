@@ -91,8 +91,8 @@ class Model(nerf.Model):
             self.tb.add_scalar("{0}/error_t".format(split), error.t.mean(), step)
 
     @torch.no_grad()
-    def visualize(self, opt, var, step=0, split="train"):
-        super().visualize(opt, var, step=step, split=split)
+    def visualize(self, opt, var, step=0, split="train", val_idx=0):
+        super().visualize(opt, var, step=step, split=split, val_idx=val_idx)
         if opt.visdom:
             if split == "val":
                 pose, pose_GT = self.get_all_training_poses(opt)
