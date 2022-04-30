@@ -53,14 +53,19 @@ class Model(nerf.Model):
 
     def train_iteration(self, opt, var, loader):
         self.optim_pose.zero_grad()
-        if opt.optim.warmup_pose:
-            # simple linear warmup of pose learning rate
+        modify_pose_lr = opt.optim.warmup_pose or opt.optim.lock_pose
+        if modify_pose_lr:
             # cache the original learning rate
             self.optim_pose.param_groups[0]["lr_orig"] = self.optim_pose.param_groups[0]["lr"]
+        if opt.optim.warmup_pose:
+            # simple linear warmup of pose learning rate
             self.optim_pose.param_groups[0]["lr"] *= min(1, self.it/opt.optim.warmup_pose)
+        if opt.optim.lock_pose and self.it <= opt.optim.lock_pose:
+            # Lock poses for first N iterations.
+            self.optim_pose.param_groups[0]["lr"] = 0.0
         loss = super().train_iteration(opt, var, loader)
         self.optim_pose.step()
-        if opt.optim.warmup_pose:
+        if modify_pose_lr:
             # reset learning rate
             self.optim_pose.param_groups[0]["lr"] = self.optim_pose.param_groups[0]["lr_orig"]
         if opt.optim.sched_pose:
@@ -197,6 +202,7 @@ class Model(nerf.Model):
                 dict(
                     blender=util_vis.plot_save_poses_blender,
                     llff=util_vis.plot_save_poses,
+                    bonn=util_vis.plot_save_poses,
                 )[opt.data.dataset](opt, fig, pose_aligned, pose_ref=pose_ref, path=cam_path, ep=ep)
             else:
                 pose = pose.detach().cpu()
@@ -237,7 +243,6 @@ class Graph(nerf.Graph):
                     pose = var.pose
             else:
                 pose = self.pose_eye
-            set_trace()
             # add learnable pose correction
             var.se3_refine = self.se3_refine.weight[var.idx]
             pose_refine = camera.lie.se3_to_SE3(var.se3_refine)
@@ -268,8 +273,8 @@ class NeRF(nerf.NeRF):
 
     def positional_encoding(self, opt, input, L):  # [B,...,N]
         input_enc = super().positional_encoding(opt, input, L=L)  # [B,...,2NL]
-        # coarse-to-fine: smoothly mask positional encoding for BARF
-        if opt.barf_c2f is not None:
+        # # coarse-to-fine: smoothly mask positional encoding for BARF
+        if opt.barf_c2f is not None and not opt.arch.posenc.gpe:
             # set weights for different frequency bands
             start, end = opt.barf_c2f
             alpha = (self.progress.data-start)/(end-start)*L

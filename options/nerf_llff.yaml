@@ -7,6 +7,7 @@ arch:                                                       # architectural opti
     posenc:                                                 # positional encoding:
         L_3D: 10                                            # number of bases (3D point)
         L_view: 4                                           # number of bases (viewpoint)
+        gpe:
     density_activ: softplus                                 # activation function for output volume density
     tf_init: true                                           # initialize network weights in TensorFlow style
 
@@ -54,4 +55,6 @@ freq:                                                       # periodic actions d
     scalar: 200                                             # log losses and scalar states (every N iterations)
     vis: 1000                                               # visualize results (every N iterations)
     val: 2000                                               # validate on val set (every N iterations)
+    val_previews: []                                        # also validate on these iteration numbers
+    val_ptclds: false                                       # save val renders as point clouds
     ckpt: 5000                                              # save checkpoint (every N iterations)

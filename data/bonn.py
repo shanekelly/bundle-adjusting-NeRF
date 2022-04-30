@@ -16,24 +16,35 @@ from . import base
 import camera
 from util import log, debug
 
-from ipdb import set_trace
+from im_util.transforms import tfmat_from_quat_and_translation
 
 
 class Dataset(base.Dataset):
 
-    def __init__(self, opt, split="train", subset=None):
-        self.raw_H, self.raw_W = 800, 800
+    def __init__(self, opt, split="train", subset=None, downsample=None):
+        self.raw_H, self.raw_W = 480, 640
         super().__init__(opt, split)
-        self.root = opt.data.root or "data/blender"
-        self.path = "{}/{}".format(self.root, opt.data.scene)
+        self.root = opt.data.root or "data/bonn"
+        self.path = self.root
         # load/parse metadata
-        meta_fname = "{}/transforms_{}.json".format(self.path, split)
-        with open(meta_fname) as file:
-            self.meta = json.load(file)
-        self.list = self.meta["frames"]
-        self.focal = 0.5*self.raw_W/np.tan(0.5*self.meta["camera_angle_x"])
+        meta_fname = f'{self.path}/traj_z-backwards.txt'
+        self.list = []
+        with open(meta_fname) as meta_file:
+            self.meta = meta_file.readlines()
+        for line in self.meta:
+            t_us, px, py, pz, qx, qy, qz, qw = [float(w) for w in line.split()]
+            t_ns = int(t_us * 1e6)
+
+            fpath = f'images/rgb_{t_ns}'
+            tfmat = tfmat_from_quat_and_translation(
+                np.array([qx, qy, qz, qw]), np.array([px, py, pz]))
+
+            self.list.append({'file_path': fpath, 'transform_matrix': tfmat})
+        self.focal = 610
         if subset:
             self.list = self.list[:subset]
+        if downsample:
+            self.list = self.list[::downsample]
         # preload dataset
         if opt.data.preload:
             self.images = self.preload_threading(opt, self.get_image)
@@ -73,8 +84,6 @@ class Dataset(base.Dataset):
     def preprocess_image(self, opt, image, aug=None):
         image = super().preprocess_image(opt, image, aug=aug)
         rgb, mask = image[:3], image[3:]
-        if opt.data.bgcolor is not None:
-            rgb = rgb*mask+opt.data.bgcolor*(1-mask)
         return rgb
 
     def get_camera(self, opt, idx):
@@ -86,7 +95,8 @@ class Dataset(base.Dataset):
         return intr, pose
 
     def parse_raw_camera(self, opt, pose_raw):
-        pose_flip = camera.pose(R=torch.diag(torch.tensor([1, -1, -1])))
-        pose = camera.pose.compose([pose_flip, pose_raw[:3]])
-        pose = camera.pose.invert(pose)
+        # BARF uses poses that represent camera-from-world transforms with the x-y-z axes pointing
+        # right-up-backwards, respectively.
+        pose = camera.pose.invert(pose_raw[:3])
+
         return pose

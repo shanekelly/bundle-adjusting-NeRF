@@ -1,10 +1,14 @@
 import numpy as np
-import os,sys,time
+import os
+import sys
+import time
 import torch
 import importlib
 
 import options
+from ipdb import launch_ipdb_on_exception
 from util import log
+
 
 def main():
 
@@ -28,5 +32,7 @@ def main():
 
         m.train(opt)
 
-if __name__=="__main__":
-    main()
+
+if __name__ == "__main__":
+    with launch_ipdb_on_exception():
+        main()

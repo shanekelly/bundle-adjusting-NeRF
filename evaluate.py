@@ -6,6 +6,7 @@ import torch
 import importlib
 
 import options
+from ipdb import launch_ipdb_on_exception
 from util import log
 
 
@@ -35,4 +36,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    with launch_ipdb_on_exception():
+        main()

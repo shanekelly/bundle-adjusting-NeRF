@@ -18,6 +18,7 @@ from util import log, debug
 from . import base
 import camera
 
+from point_cloud.rgbd import point_cloud_from_rgb_img_and_depth_img
 from ipdb import set_trace
 
 # ============================ main engine for training and evaluation ============================
@@ -34,7 +35,6 @@ class Model(base.Model):
         # prefetch all training data
         self.train_data.prefetch_all_data(opt)
         self.train_data.all = edict(util.move_to_device(self.train_data.all, opt.device))
-        set_trace()
 
     def setup_optimizer(self, opt):
         log.info("setting up optimizers...")
@@ -70,7 +70,7 @@ class Model(base.Model):
             self.train_iteration(opt, var, loader)
             if opt.optim.sched:
                 self.sched.step()
-            if self.it % opt.freq.val == 0:
+            if self.it % opt.freq.val == 0 or self.it in opt.freq.val_previews:
                 self.validate(opt, self.it)
             if self.it % opt.freq.ckpt == 0:
                 self.save_checkpoint(opt, ep=None, it=self.it)
@@ -102,14 +102,27 @@ class Model(base.Model):
     @torch.no_grad()
     def visualize(self, opt, var, step=0, split="train", eps=1e-10):
         if opt.tb:
-            util_vis.tb_image(opt, self.tb, step, split, "image", var.image)
+            if step == 0:
+                # Only log the groundtruth RGB image once (on the first iteration).
+                util_vis.tb_image(opt, self.tb, step, split, "rgb/gt", var.image)
             if not opt.nerf.rand_rays or split != "train":
                 invdepth = (1-var.depth)/var.opacity if opt.camera.ndc else 1 / \
                     (var.depth/var.opacity+eps)
                 rgb_map = var.rgb.view(-1, opt.H, opt.W, 3).permute(0, 3, 1, 2)  # [B,3,H,W]
                 invdepth_map = invdepth.view(-1, opt.H, opt.W, 1).permute(0, 3, 1, 2)  # [B,1,H,W]
-                util_vis.tb_image(opt, self.tb, step, split, "rgb", rgb_map)
-                util_vis.tb_image(opt, self.tb, step, split, "invdepth", invdepth_map)
+                util_vis.tb_image(opt, self.tb, step, split, "rgb/render", rgb_map)
+                util_vis.tb_image(opt, self.tb, step, split, "invdepth/render", invdepth_map)
+                util_vis.tb_image(opt, self.tb, step, split, "depth/render", 1/invdepth_map)
+
+                if opt.freq.val_ptclds:
+                    # Save the RGB and depth renderings as a point cloud in the output directory.
+                    ptcld_dpath = "{}/ptclds".format(opt.output_path)
+                    os.makedirs(ptcld_dpath, exist_ok=True)
+                    point_cloud_from_rgb_img_and_depth_img(
+                        rgb_map.squeeze().permute(1, 2, 0), (1 / invdepth_map).squeeze(),
+                        var.pose.squeeze(), var.intr.squeeze(),
+                        output_fpath=f'{ptcld_dpath}/ptcld_{step:06d}.ply')
+
                 if opt.nerf.fine_sampling:
                     invdepth = (1-var.depth_fine)/var.opacity_fine if opt.camera.ndc else 1 / \
                         (var.depth_fine/var.opacity_fine+eps)
@@ -170,7 +183,7 @@ class Model(base.Model):
     @torch.no_grad()
     def generate_videos_synthesis(self, opt, eps=1e-10):
         self.graph.eval()
-        if opt.data.dataset in ["blender", "bonn"]:
+        if opt.data.dataset in ["blender"]:
             test_path = "{}/test_view".format(opt.output_path)
             # assume the test view synthesis are already generated
             print("writing videos...")
@@ -208,6 +221,7 @@ class Model(base.Model):
                     "{}/rgb_{}.png".format(novel_path, i))
                 torchvision_F.to_pil_image(invdepth_map.cpu()[0]).save(
                     "{}/depth_{}.png".format(novel_path, i))
+
             # write videos
             print("writing videos...")
             rgb_vid_fname = "{}/novel_view_rgb.mp4".format(opt.output_path)
@@ -356,11 +370,17 @@ class NeRF(torch.nn.Module):
     def __init__(self, opt):
         super().__init__()
         self.define_network(opt)
+        if opt.arch.posenc.gpe:
+            gpe_scale = 12
+            self.gpe_mat = torch.normal(0, 1, (3, 256), device=opt.device) * gpe_scale
 
     def define_network(self, opt):
-        input_3D_dim = 3+6*opt.arch.posenc.L_3D if opt.arch.posenc else 3
-        if opt.nerf.view_dep:
-            input_view_dim = 3+6*opt.arch.posenc.L_view if opt.arch.posenc else 3
+        if opt.arch.posenc.gpe:
+            input_3D_dim = 3+2*256
+        else:
+            input_3D_dim = 3+6*opt.arch.posenc.L_3D if opt.arch.posenc else 3
+            if opt.nerf.view_dep:
+                input_view_dim = 3+6*opt.arch.posenc.L_view if opt.arch.posenc else 3
         # point-wise feature
         self.mlp_feat = torch.nn.ModuleList()
         L = util.get_layer_dims(opt.arch.layers_feat)
@@ -470,8 +490,15 @@ class NeRF(torch.nn.Module):
 
     def positional_encoding(self, opt, input, L):  # [B,...,N]
         shape = input.shape
-        freq = 2**torch.arange(L, dtype=torch.float32, device=opt.device)*np.pi  # [L]
-        spectrum = input[..., None]*freq  # [B,...,N,L]
+
+        if opt.arch.posenc.gpe:
+            # Gaussian positional encoding.
+            spectrum = input @ self.gpe_mat
+        else:
+            # Original NeRF positional encoding.
+            freq = 2**torch.arange(L, dtype=torch.float32, device=opt.device)*np.pi  # [L]
+            spectrum = input[..., None]*freq  # [B,...,N,L]
+
         sin, cos = spectrum.sin(), spectrum.cos()  # [B,...,N,L]
         input_enc = torch.stack([sin, cos], dim=-2)  # [B,...,N,2,L]
         input_enc = input_enc.view(*shape[:-1], -1)  # [B,...,2NL]

@@ -27,7 +27,9 @@ data:                                                       # data options
     center_crop:                                            # center crop the image by ratio
     val_on_test: false                                      # validate on test set during training
     train_sub:                                              # consider a subset of N training samples
+    train_downsample:                                       # only use every Nth image for training
     val_sub:                                                # consider a subset of N validation samples
+    val_downsample:                                         # only use every Nth image for validation
 
 loss_weight: {}                                             # loss weights (in log scale)
 

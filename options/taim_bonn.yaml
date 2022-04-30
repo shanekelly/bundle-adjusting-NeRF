@@ -1,0 +1,22 @@
+_parent_: options/barf_bonn.yaml
+
+arch:                                                       # architectural optionss
+    posenc:                                                 # positional encoding:
+        gpe: true
+nerf:
+    view_dep: False
+optim:
+    lr_pose: 1.0e-6                                          # learning rate of camera poses
+    lr_pose_end: 1.0e-8                                      # terminal learning rate of camera poses (only used with sched_pose.type=ExponentialLR)
+    # lock_pose: 1000                                         # Set pose LR to 0 for first N iterations.
+data:                                                       # data options
+    # root: "/automount_home_students/skelly/eth/implicit-mapping/datasets/strawberry/5/last-146-frames/orbslam/front-camera/right-camera/"
+    root: "/automount_home_students/skelly/eth/implicit-mapping/datasets/strawberry/5/5-frames/orbslam/front-camera/right-camera/"
+    val_sub: 1
+    train_downsample: 3
+max_iter: 50000
+freq:
+    val_previews: [250, 500, 1500]
+    val: 1000
+    ckpt: 1000
+visdom:
