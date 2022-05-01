@@ -1,13 +1,14 @@
 _parent_: options/barf_llff.yaml
 
-barf_c2f: [0.1,0.5]                                        # coarse-to-fine scheduling on positional encoding
+barf_c2f: [0.1,0.5]                                         # coarse-to-fine scheduling on positional encoding
 
 camera:                                                     # camera options
     noise:                                                  # synthetic perturbations on the camera poses (Blender only)
 
 nerf:
+    view_dep: false                                         # condition MLP on viewpoint
     depth:
-        range: [10, 0]
+        range: [10,0]                                       # near/far bounds for depth sampling
 
 optim:                                                      # optimization options
     lr_pose: 3.e-3                                          # learning rate of camera poses
@@ -19,16 +20,17 @@ optim:                                                      # optimization optio
     test_photo: true                                        # test-time photometric optimization for evaluation
     test_iter: 100                                          # number of iterations for test-time optimization
 
-max_iter: 50000                                            # train to maximum number of iterations
+max_iter: 50000                                             # train to maximum number of iterations
 
 data:
     dataset: bonn
     image_size: [480,640]                                   # input image sizes [height,width]
-    val_sub: 1
+    val_sub: 2                                              # consider a subset of N validation samples
+
+freq:
+    val: 2000                                               # validate on val set (every N iters)
+    val_previews: [500,1000,1500]                           # also validate on these iteration numbers
+    val_n_log: 2                                            # log up to N val results to tensorboard
+    ckpt: 5000                                              # save checkpoint (every N iters)
 
 visdom:                                                     # Visdom options
-    cam_depth: 0.2                                          # size of visualized cameras
-freq:
-    val: 1000
-    val_previews: [500, 1500]
-    ckpt: 5000

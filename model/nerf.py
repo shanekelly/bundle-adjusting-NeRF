@@ -111,8 +111,6 @@ class Model(base.Model):
                 rgb_map = var.rgb.view(-1, opt.H, opt.W, 3).permute(0, 3, 1, 2)  # [B,3,H,W]
                 invdepth_map = invdepth.view(-1, opt.H, opt.W, 1).permute(0, 3, 1, 2)  # [B,1,H,W]
                 util_vis.tb_image(opt, self.tb, step, split, f"{val_idx}/rgb/render", rgb_map)
-                util_vis.tb_image(opt, self.tb, step, split, f"{val_idx}/invdepth/render",
-                                  invdepth_map)
                 util_vis.tb_image(opt, self.tb, step, split, f"{val_idx}/depth/render",
                                   1/invdepth_map)
 
@@ -246,11 +244,13 @@ class Graph(base.Graph):
             self.nerf_fine = NeRF(opt)
 
     def forward(self, opt, var, mode=None):
+        # The number of images that are included in this forward pass.
         batch_size = len(var.idx)
         pose = self.get_pose(opt, var, mode=mode)
         # render images
         if opt.nerf.rand_rays and mode in ["train", "test-optim"]:
-            # sample random rays for optimization
+            # Select indices (without replacement) from a list of H*W indices. Sample theses pixel
+            # indices from each image for optimization.
             var.ray_idx = torch.randperm(
                 opt.H*opt.W, device=opt.device)[:opt.nerf.rand_rays//batch_size]
             ret = self.render(opt, pose, intr=var.intr, ray_idx=var.ray_idx,
