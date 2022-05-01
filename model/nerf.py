@@ -56,7 +56,7 @@ class Model(base.Model):
         # before training
         log.title("TRAINING START")
         self.timer = edict(start=time.time(), it_mean=None)
-        self.graph.train()
+        self.graph.train()  # Set pytorch module to training mode.
         self.ep = 0  # dummy for timer
         # training
         if self.iter_start == 0:
@@ -249,12 +249,11 @@ class Graph(base.Graph):
         pose = self.get_pose(opt, var, mode=mode)
         # render images
         if opt.nerf.rand_rays and mode in ["train", "test-optim"]:
-            # Select indices (without replacement) from a list of H*W indices. Sample theses pixel
-            # indices from each image for optimization.
+            # Select indices (without replacement) from a list of B*H*W indices.
             var.ray_idx = torch.randperm(
-                opt.H*opt.W, device=opt.device)[:opt.nerf.rand_rays//batch_size]
+                batch_size*opt.H*opt.W, device=opt.device)[:opt.nerf.rand_rays]
             ret = self.render(opt, pose, intr=var.intr, ray_idx=var.ray_idx,
-                              mode=mode)  # [B,N,3],[B,N,1]
+                              mode=mode)  # rgb:[B,S,3],depth:[B,S,1],opacity:[B,S,1]
         else:
             # render full image (process in slices)
             ret = self.render_by_slices(opt, pose, intr=var.intr, mode=mode) if opt.nerf.rand_rays else \
@@ -265,9 +264,9 @@ class Graph(base.Graph):
     def compute_loss(self, opt, var, mode=None):
         loss = edict()
         batch_size = len(var.idx)
-        image = var.image.view(batch_size, 3, opt.H*opt.W).permute(0, 2, 1)
+        image = var.image.permute(0, 2, 3, 1).reshape(batch_size*opt.H*opt.W, 3)
         if opt.nerf.rand_rays and mode in ["train", "test-optim"]:
-            image = image[:, var.ray_idx]
+            image = image[var.ray_idx]
         # compute image losses
         if opt.loss_weight.render is not None:
             loss.render = self.MSE_loss(var.rgb, image)
@@ -285,18 +284,18 @@ class Graph(base.Graph):
         while ray.isnan().any():  # TODO: weird bug, ray becomes NaN arbitrarily if batch_size>1, not deterministic reproducible
             center, ray = camera.get_center_and_ray(opt, pose, intr=intr)  # [B,HW,3]
         if ray_idx is not None:
-            # consider only subset of rays
-            center, ray = center[:, ray_idx], ray[:, ray_idx]
+            # consider only subset of rays [B,HW,3] -> [B,S,3]
+            center, ray = center[ray_idx], ray[ray_idx]
         if opt.camera.ndc:
             # convert center/ray representations to NDC
             center, ray = camera.convert_NDC(opt, center, ray, intr=intr)
         # render with main MLP
-        depth_samples = self.sample_depth(opt, batch_size, num_rays=ray.shape[1])  # [B,HW,N,1]
+        depth_samples = self.sample_depth(opt, batch_size, num_rays=ray.shape[0])  # [BS,N,1]
         rgb_samples, density_samples = self.nerf.forward_samples(
             opt, center, ray, depth_samples, mode=mode)
         rgb, depth, opacity, prob = self.nerf.composite(
             opt, ray, rgb_samples, density_samples, depth_samples)
-        ret = edict(rgb=rgb, depth=depth, opacity=opacity)  # [B,HW,K]
+        ret = edict(rgb=rgb, depth=depth, opacity=opacity)  # [B,S,K]
         # render with fine MLP from coarse MLP
         if opt.nerf.fine_sampling:
             with torch.no_grad():
@@ -321,21 +320,22 @@ class Graph(base.Graph):
         # render the image by slices for memory considerations
         for c in range(0, opt.H*opt.W, opt.nerf.rand_rays):
             ray_idx = torch.arange(c, min(c+opt.nerf.rand_rays, opt.H*opt.W), device=opt.device)
-            ret = self.render(opt, pose, intr=intr, ray_idx=ray_idx, mode=mode)  # [B,R,3],[B,R,1]
+            ret = self.render(opt, pose, intr=intr, ray_idx=ray_idx,
+                              mode=mode)  # [B,R,3],[B,R,1]
             for k in ret:
                 ret_all[k].append(ret[k])
         # group all slices of images
         for k in ret_all:
-            ret_all[k] = torch.cat(ret_all[k], dim=1)
+            ret_all[k] = torch.cat(ret_all[k], dim=0)
         return ret_all
 
     def sample_depth(self, opt, batch_size, num_rays=None):
         depth_min, depth_max = opt.nerf.depth.range
         num_rays = num_rays or opt.H*opt.W
-        rand_samples = torch.rand(batch_size, num_rays, opt.nerf.sample_intvs,
+        rand_samples = torch.rand(num_rays, opt.nerf.sample_intvs,
                                   1, device=opt.device) if opt.nerf.sample_stratified else 0.5
         rand_samples += torch.arange(opt.nerf.sample_intvs,
-                                     device=opt.device)[None, None, :, None].float()  # [B,HW,N,1]
+                                     device=opt.device)[None, :, None].float()  # [B,HW,N,1]
         depth_samples = rand_samples/opt.nerf.sample_intvs * \
             (depth_max-depth_min)+depth_min  # [B,HW,N,1]
         depth_samples = dict(
@@ -476,17 +476,17 @@ class NeRF(torch.nn.Module):
         # volume rendering: compute probability (using quadrature)
         depth_intv_samples = depth_samples[..., 1:, 0]-depth_samples[..., :-1, 0]  # [B,HW,N-1]
         depth_intv_samples = torch.cat([depth_intv_samples, torch.empty_like(
-            depth_intv_samples[..., :1]).fill_(1e10)], dim=2)  # [B,HW,N]
+            depth_intv_samples[..., :1]).fill_(1e10)], dim=1)  # [B,HW,N]
         dist_samples = depth_intv_samples*ray_length  # [B,HW,N]
         sigma_delta = density_samples*dist_samples  # [B,HW,N]
         alpha = 1-(-sigma_delta).exp_()  # [B,HW,N]
         T = (-torch.cat([torch.zeros_like(sigma_delta[..., :1]),
-             sigma_delta[..., :-1]], dim=2).cumsum(dim=2)).exp_()  # [B,HW,N]
+             sigma_delta[..., :-1]], dim=1).cumsum(dim=1)).exp_()  # [B,HW,N]
         prob = (T*alpha)[..., None]  # [B,HW,N,1]
         # integrate RGB and depth weighted by probability
-        depth = (depth_samples*prob).sum(dim=2)  # [B,HW,1]
-        rgb = (rgb_samples*prob).sum(dim=2)  # [B,HW,3]
-        opacity = prob.sum(dim=2)  # [B,HW,1]
+        depth = (depth_samples*prob).sum(dim=1)  # [B,HW,1]
+        rgb = (rgb_samples*prob).sum(dim=1)  # [B,HW,3]
+        opacity = prob.sum(dim=1)  # [B,HW,1]
         if opt.nerf.setbg_opaque:
             rgb = rgb+opt.data.bgcolor*(1-opacity)
         return rgb, depth, opacity, prob  # [B,HW,K]

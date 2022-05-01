@@ -29,7 +29,7 @@ data:
 
 freq:
     val: 2000                                               # validate on val set (every N iters)
-    val_previews: [500,1000,1500]                           # also validate on these iteration numbers
+    val_previews: [250,500,1000,1500]                           # also validate on these iteration numbers
     val_n_log: 2                                            # log up to N val results to tensorboard
     ckpt: 5000                                              # save checkpoint (every N iters)
 

@@ -140,8 +140,9 @@ class Model():
         if self.it == 0:
             self.visualize(opt, var, step=self.it+1, split="train")
         self.it += 1
-        loader.set_postfix(it=self.it, loss="{:.3f}".format(loss.all))
         self.timer.it_end = time.time()
+        loader.set_postfix(it=self.it, loss=f"{loss.all:.3f}",
+                           t=f'{self.timer.it_end-self.timer.it_start:.3f}')
         util.update_timer(opt, self.timer, self.ep, len(loader))
         return loss
 
