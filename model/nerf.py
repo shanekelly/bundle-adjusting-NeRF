@@ -59,8 +59,8 @@ class Model(base.Model):
         self.graph.train()  # Set pytorch module to training mode.
         self.ep = 0  # dummy for timer
         # training
-        if self.iter_start == 0:
-            self.validate(opt, 0)
+        # if self.iter_start == 0:
+        #     self.validate(opt, 0)
         loader = tqdm.trange(opt.max_iter, desc="training", leave=False)
         for self.it in loader:
             if self.it < self.iter_start:
@@ -105,6 +105,9 @@ class Model(base.Model):
             if step == 0 or (split == "train" and step == 1):
                 # Only log the groundtruth RGB image once (on the first iteration).
                 util_vis.tb_image(opt, self.tb, step, split, f"{val_idx}/rgb/gt", var.image)
+            if split == 'train':
+                util_vis.tb_image(opt, self.tb, step, split, f"{val_idx}/sampled",
+                                  var.sampled[:, None]/var.sampled.max(), cmap='Reds')
             if not opt.nerf.rand_rays or split != "train":
                 invdepth = (1-var.depth)/var.opacity if opt.camera.ndc else 1 / \
                     (var.depth/var.opacity+eps)
@@ -250,8 +253,8 @@ class Graph(base.Graph):
         # render images
         if opt.nerf.rand_rays and mode in ["train", "test-optim"]:
             # Select indices (without replacement) from a list of B*H*W indices.
-            var.ray_idx = torch.randperm(
-                batch_size*opt.H*opt.W, device=opt.device)[:opt.nerf.rand_rays]
+            var.ray_idx = torch.multinomial(
+                torch.ones(batch_size*opt.H*opt.W, device=opt.device), opt.nerf.rand_rays)
             ret = self.render(opt, pose, intr=var.intr, ray_idx=var.ray_idx,
                               mode=mode)  # rgb:[B,S,3],depth:[B,S,1],opacity:[B,S,1]
         else:
@@ -259,6 +262,9 @@ class Graph(base.Graph):
             ret = self.render_by_slices(opt, pose, intr=var.intr, mode=mode) if opt.nerf.rand_rays else \
                 self.render(opt, pose, intr=var.intr, mode=mode)  # [B,HW,3],[B,HW,1]
         var.update(ret)
+        if mode == 'train':
+            # Increment the counter for all rays that were sampled.
+            var.sampled.view(-1)[var.ray_idx] += 1
         return var
 
     def compute_loss(self, opt, var, mode=None):

@@ -187,15 +187,16 @@ def restore_checkpoint(opt, model, load_name=None, resume=False):
             getattr(model, key).load_state_dict(checkpoint[key])
     if resume:
         ep, it = checkpoint["epoch"], checkpoint["iter"]
+        sampled = checkpoint.get(['sampled'])
         if resume is not True:
             assert(resume == (ep or it))
         print("resuming from epoch {0} (iteration {1})".format(ep, it))
     else:
-        ep, it = None, None
-    return ep, it
+        ep, it, sampled = None, None, None
+    return ep, it, sampled
 
 
-def save_checkpoint(opt, model, ep, it, latest=False, children=None):
+def save_checkpoint(opt, model, ep, it, sampled, latest=False, children=None):
     os.makedirs("{0}/model".format(opt.output_path), exist_ok=True)
     if children is not None:
         graph_state_dict = {k: v for k, v in model.graph.state_dict().items()
@@ -205,6 +206,7 @@ def save_checkpoint(opt, model, ep, it, latest=False, children=None):
     checkpoint = dict(
         epoch=ep,
         iter=it,
+        sampled=sampled,
         graph=graph_state_dict,
     )
     for key in model.__dict__:

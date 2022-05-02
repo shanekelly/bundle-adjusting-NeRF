@@ -48,7 +48,7 @@ resume: false                                               # resume training (t
 
 output_root: output                                         # root path for output files (checkpoints and results)
 tb:                                                         # TensorBoard options
-    num_images: [4,8]                                       # number of (tiled) images to visualize in TensorBoard
+    num_images: [8,8]                                       # number of (tiled) images to visualize in TensorBoard
 visdom:                                                     # Visdom options
     server: localhost                                       # server to host Visdom
     port: 9000                                              # port number for Visdom

@@ -57,6 +57,7 @@ class Dataset(base.Dataset):
         if opt.data.preload:
             self.images = self.preload_threading(opt, self.get_image)
             self.cameras = self.preload_threading(opt, self.get_camera, data_str="cameras")
+        self.sampled = torch.zeros(len(self.list), self.raw_H, self.raw_W, dtype=torch.int64)
 
     def prefetch_all_data(self, opt):
         assert(not opt.data.augment)
@@ -76,10 +77,12 @@ class Dataset(base.Dataset):
         image = self.preprocess_image(opt, image, aug=aug)
         intr, pose = self.cameras[idx] if opt.data.preload else self.get_camera(opt, idx)
         intr, pose = self.preprocess_camera(opt, intr, pose, aug=aug)
+        sampled = self.sampled[idx]
         sample.update(
             image=image,
             intr=intr,
             pose=pose,
+            sampled=sampled
         )
         return sample
 

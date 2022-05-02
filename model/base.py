@@ -55,17 +55,20 @@ class Model():
             self.sched = scheduler(self.optim, **kwargs)
 
     def restore_checkpoint(self, opt):
-        epoch_start, iter_start = None, None
+        epoch_start, iter_start, sampled = None, None, None
         if opt.resume:
             log.info("resuming from previous checkpoint...")
-            epoch_start, iter_start = util.restore_checkpoint(opt, self, resume=opt.resume)
+            epoch_start, iter_start, sampled = util.restore_checkpoint(opt, self, resume=opt.resume)
         elif opt.load is not None:
             log.info("loading weights from checkpoint {}...".format(opt.load))
-            epoch_start, iter_start = util.restore_checkpoint(opt, self, load_name=opt.load)
+            epoch_start, iter_start, sampled = util.restore_checkpoint(
+                opt, self, load_name=opt.load)
         else:
             log.info("initializing weights from scratch...")
         self.epoch_start = epoch_start or 0
         self.iter_start = iter_start or 0
+        if sampled:
+            self.train_data.sampled = sampled
 
     def setup_visualizer(self, opt):
         log.info("setting up visualizers...")
@@ -137,7 +140,7 @@ class Model():
         # after train iteration
         if (self.it+1) % opt.freq.scalar == 0:
             self.log_scalars(opt, var, loss, step=self.it+1, split="train")
-        if self.it == 0:
+        if (self.it+1) % opt.freq.vis == 0 or self.it == 0:
             self.visualize(opt, var, step=self.it+1, split="train")
         self.it += 1
         self.timer.it_end = time.time()
