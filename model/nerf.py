@@ -8,6 +8,7 @@ import torchvision
 import torchvision.transforms.functional as torchvision_F
 import tqdm
 from easydict import EasyDict as edict
+from ipdb import set_trace
 
 import lpips
 from external.pohsun_ssim import pytorch_ssim
@@ -19,7 +20,6 @@ from . import base
 import camera
 
 from point_cloud.rgbd import point_cloud_from_rgb_img_and_depth_img
-from ipdb import set_trace
 
 # ============================ main engine for training and evaluation ============================
 
@@ -59,8 +59,8 @@ class Model(base.Model):
         self.graph.train()  # Set pytorch module to training mode.
         self.ep = 0  # dummy for timer
         # training
-        # if self.iter_start == 0:
-        #     self.validate(opt, 0)
+        if self.iter_start == 0:
+            self.validate(opt, 0)
         loader = tqdm.trange(opt.max_iter, desc="training", leave=False)
         for self.it in loader:
             if self.it < self.iter_start:
@@ -73,7 +73,7 @@ class Model(base.Model):
             if self.it % opt.freq.val == 0 or self.it in opt.freq.val_previews:
                 self.validate(opt, self.it)
             if self.it % opt.freq.ckpt == 0:
-                self.save_checkpoint(opt, ep=None, it=self.it)
+                self.save_checkpoint(opt, ep=None, it=self.it, sampled=var.sampled, loss=var.loss)
         # after training
         if opt.tb:
             self.tb.flush()
@@ -108,7 +108,11 @@ class Model(base.Model):
             if split == 'train':
                 util_vis.tb_image(opt, self.tb, step, split, f"{val_idx}/sampled",
                                   var.sampled[:, None]/var.sampled.max(), cmap='Reds')
+                util_vis.tb_image(opt, self.tb, step, split, f"{val_idx}/sample_prob",
+                                  var.sample_prob[:, None], cmap='Blues')
             if not opt.nerf.rand_rays or split != "train":
+                if split == 'val' and step == 0 and not opt.freq.val_start:
+                    return
                 invdepth = (1-var.depth)/var.opacity if opt.camera.ndc else 1 / \
                     (var.depth/var.opacity+eps)
                 rgb_map = var.rgb.view(-1, opt.H, opt.W, 3).permute(0, 3, 1, 2)  # [B,3,H,W]
@@ -247,14 +251,12 @@ class Graph(base.Graph):
             self.nerf_fine = NeRF(opt)
 
     def forward(self, opt, var, mode=None):
-        # The number of images that are included in this forward pass.
-        batch_size = len(var.idx)
         pose = self.get_pose(opt, var, mode=mode)
         # render images
         if opt.nerf.rand_rays and mode in ["train", "test-optim"]:
             # Select indices (without replacement) from a list of B*H*W indices.
             var.ray_idx = torch.multinomial(
-                torch.ones(batch_size*opt.H*opt.W, device=opt.device), opt.nerf.rand_rays)
+                self.sample_prob(opt, var), opt.nerf.rand_rays)
             ret = self.render(opt, pose, intr=var.intr, ray_idx=var.ray_idx,
                               mode=mode)  # rgb:[B,S,3],depth:[B,S,1],opacity:[B,S,1]
         else:
@@ -275,10 +277,10 @@ class Graph(base.Graph):
             image = image[var.ray_idx]
         # compute image losses
         if opt.loss_weight.render is not None:
-            loss.render = self.MSE_loss(var.rgb, image)
+            loss.render = self.MSE_loss(var.rgb, image, collapse=False).mean(dim=1)
         if opt.loss_weight.render_fine is not None:
             assert(opt.nerf.fine_sampling)
-            loss.render_fine = self.MSE_loss(var.rgb_fine, image)
+            loss.render_fine = self.MSE_loss(var.rgb_fine, image, collapse=False)
         return loss
 
     def get_pose(self, opt, var, mode=None):
@@ -372,6 +374,34 @@ class Graph(base.Graph):
         t = (unif-cdf_low)/(cdf_high-cdf_low+1e-8)  # [B,HW,Nf]
         depth_samples = depth_low+t*(depth_high-depth_low)  # [B,HW,Nf]
         return depth_samples[..., None]  # [B,HW,Nf,1]
+
+    def sample_prob(self, opt, var):
+        if not (opt.fruit_nn or opt.sample_loss):
+            # var.sample_prob = torch.ones(var.image.shape[0], opt.H, opt.W)
+            var.sample_prob = torch.tensor(1, dtype=torch.float, device=opt.device).expand(
+                var.image.shape[0], opt.H, opt.W)
+            return var.sample_prob.view(-1)
+
+        var.sample_prob = None
+        if opt.fruit_nn:
+            var.sample_prob = var.fruitiness.clone()
+        if opt.sample_loss:
+            if var.loss is not None:  # loss dist already initialized
+                loss_prob = torchvision_F.gaussian_blur(var.loss, kernel_size=11)
+                # loss_prob = (loss_prob / loss_prob.max()).pow(2)
+                loss_prob_min = loss_prob.min()
+                loss_prob_max = loss_prob.max()
+                loss_prob_range = loss_prob_max - loss_prob_min
+                if loss_prob_range != 0:
+                    # Scale between 0.01 and 1.00.
+                    loss_prob = ((loss_prob - loss_prob_min) / (loss_prob_range)) * 0.99 + 0.01
+                if var.sample_prob is None:
+                    var.sample_prob = loss_prob
+                else:
+                    var.sample_prob += loss_prob
+            elif var.sample_prob is None:
+                var.sample_prob = torch.ones(var.image.shape[0], opt.H, opt.W)
+        return var.sample_prob.view(-1)
 
 
 class NeRF(torch.nn.Module):

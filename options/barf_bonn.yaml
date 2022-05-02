@@ -28,9 +28,10 @@ data:
     val_sub: 2                                              # consider a subset of N validation samples
 
 freq:
-    val: 2000                                               # validate on val set (every N iters)
-    val_previews: [250,500,1000,1500]                           # also validate on these iteration numbers
+    val: 2500                                               # validate on val set (every N iters)
+    val_previews: []                                        # also validate on these iteration numbers
     val_n_log: 2                                            # log up to N val results to tensorboard
+    vis: 2500
     ckpt: 5000                                              # save checkpoint (every N iters)
 
 visdom:                                                     # Visdom options

@@ -10,6 +10,7 @@ import tqdm
 from easydict import EasyDict as edict
 import visdom
 import matplotlib.pyplot as plt
+from ipdb import set_trace
 
 import util
 import util_vis
@@ -17,7 +18,6 @@ from util import log, debug
 from . import nerf
 import camera
 
-from ipdb import set_trace
 
 # ============================ main engine for training and evaluation ============================
 

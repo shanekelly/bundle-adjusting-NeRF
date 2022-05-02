@@ -8,4 +8,8 @@ optim:
     lr_pose_end: 1.0e-8                                     # terminal learning rate of camera poses (only used with sched_pose.type=ExponentialLR)
 data:                                                       # data options
     root: "/automount_home_students/skelly/eth/implicit-mapping/datasets/strawberry/5/last-146-frames/orbslam/front-camera/right-camera/"
+    train_downsample: 3
     # root: "/automount_home_students/skelly/eth/implicit-mapping/datasets/strawberry/5/5-frames/orbslam/front-camera/right-camera/"
+
+sample_loss: true
+fruit_nn: "/automount_home_students/skelly/eth/implicit-mapping/fruit-detector-weights/strawberry.pth"

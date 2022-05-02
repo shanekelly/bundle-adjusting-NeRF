@@ -187,16 +187,17 @@ def restore_checkpoint(opt, model, load_name=None, resume=False):
             getattr(model, key).load_state_dict(checkpoint[key])
     if resume:
         ep, it = checkpoint["epoch"], checkpoint["iter"]
-        sampled = checkpoint.get(['sampled'])
+        sampled = checkpoint.get('sampled')
+        loss = checkpoint.get('loss')
         if resume is not True:
             assert(resume == (ep or it))
         print("resuming from epoch {0} (iteration {1})".format(ep, it))
     else:
-        ep, it, sampled = None, None, None
-    return ep, it, sampled
+        ep, it, sampled, loss = None, None, None, None
+    return ep, it, sampled, loss
 
 
-def save_checkpoint(opt, model, ep, it, sampled, latest=False, children=None):
+def save_checkpoint(opt, model, ep, it, sampled, loss, latest=False, children=None):
     os.makedirs("{0}/model".format(opt.output_path), exist_ok=True)
     if children is not None:
         graph_state_dict = {k: v for k, v in model.graph.state_dict().items()
@@ -207,6 +208,7 @@ def save_checkpoint(opt, model, ep, it, sampled, latest=False, children=None):
         epoch=ep,
         iter=it,
         sampled=sampled,
+        loss=loss,
         graph=graph_state_dict,
     )
     for key in model.__dict__:
@@ -215,7 +217,7 @@ def save_checkpoint(opt, model, ep, it, sampled, latest=False, children=None):
     torch.save(checkpoint, "{0}/model.ckpt".format(opt.output_path))
     if not latest:
         shutil.copy("{0}/model.ckpt".format(opt.output_path),
-                    "{0}/model/{1}.ckpt".format(opt.output_path, ep or it))  # if ep is None, track it instead
+                    "{0}/model/{1:06d}.ckpt".format(opt.output_path, ep or it))  # if ep is None, track it instead
 
 
 def check_socket_open(hostname, port):

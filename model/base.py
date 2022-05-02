@@ -55,20 +55,23 @@ class Model():
             self.sched = scheduler(self.optim, **kwargs)
 
     def restore_checkpoint(self, opt):
-        epoch_start, iter_start, sampled = None, None, None
+        epoch_start, iter_start, sampled, loss = None, None, None, None
         if opt.resume:
             log.info("resuming from previous checkpoint...")
-            epoch_start, iter_start, sampled = util.restore_checkpoint(opt, self, resume=opt.resume)
+            epoch_start, iter_start, sampled, loss = util.restore_checkpoint(
+                opt, self, resume=opt.resume)
         elif opt.load is not None:
             log.info("loading weights from checkpoint {}...".format(opt.load))
-            epoch_start, iter_start, sampled = util.restore_checkpoint(
+            epoch_start, iter_start, sampled, loss = util.restore_checkpoint(
                 opt, self, load_name=opt.load)
         else:
             log.info("initializing weights from scratch...")
         self.epoch_start = epoch_start or 0
         self.iter_start = iter_start or 0
-        if sampled:
-            self.train_data.sampled = sampled
+        if sampled is not None:
+            self.train_data.all.sampled = sampled
+        if loss is not None:
+            self.train_data.all.loss = loss
 
     def setup_visualizer(self, opt):
         log.info("setting up visualizers...")
@@ -155,12 +158,24 @@ class Model():
         # weigh losses
         for key in loss:
             assert(key in opt.loss_weight)
-            assert(loss[key].shape == ())
             if opt.loss_weight[key] is not None:
-                assert not torch.isinf(loss[key]), "loss {} is Inf".format(key)
-                assert not torch.isnan(loss[key]), "loss {} is NaN".format(key)
+                assert not loss[key].isinf().any(), "loss {} is Inf".format(key)
+                assert not loss[key].isnan().any(), "loss {} is NaN".format(key)
                 loss_all += 10**float(opt.loss_weight[key])*loss[key]
-        loss.update(all=loss_all)
+        if 'loss' in var:
+            if var.loss is not None:
+                # Update the loss distribution at the location of the pixels that were just sampled
+                # in this training iteration.
+                var.loss.view(-1)[var.ray_idx] = loss_all.detach()
+            else:
+                # Initialize the loss distribution to the average loss of the first training
+                # iteration.
+                var.loss = torch.full(
+                    (var.image.shape[0], opt.H, opt.W), loss_all.detach().mean(),
+                    device=opt.device)
+        for k in loss:
+            loss[k] = loss[k].mean()
+        loss.update(all=loss_all.mean())
         return loss
 
     @torch.no_grad()
@@ -171,19 +186,21 @@ class Model():
         for it, batch in enumerate(loader):
             var = edict(batch)
             var = util.move_to_device(var, opt.device)
-            var = self.graph.forward(opt, var, mode="val")
-            loss = self.graph.compute_loss(opt, var, mode="val")
-            loss = self.summarize_loss(opt, var, loss)
-            for key in loss:
-                loss_val.setdefault(key, 0.)
-                loss_val[key] += loss[key]*len(var.idx)
-            loader.set_postfix(loss="{:.3f}".format(loss.all))
+            if ep > 0 or opt.freq.val_start:
+                var = self.graph.forward(opt, var, mode="val")
+                loss = self.graph.compute_loss(opt, var, mode="val")
+                loss = self.summarize_loss(opt, var, loss)
+                for key in loss:
+                    loss_val.setdefault(key, 0.)
+                    loss_val[key] += loss[key]*len(var.idx)
+                loader.set_postfix(loss="{:.3f}".format(loss.all))
             if it < opt.freq.val_n_log:
                 self.visualize(opt, var, step=ep, split="val", val_idx=it)
-        for key in loss_val:
-            loss_val[key] /= len(self.test_data)
-        self.log_scalars(opt, var, loss_val, step=ep, split="val")
-        log.loss_val(opt, loss_val.all)
+        if ep > 0 or opt.freq.val_start:
+            for key in loss_val:
+                loss_val[key] /= len(self.test_data)
+            self.log_scalars(opt, var, loss_val, step=ep, split="val")
+            log.loss_val(opt, loss_val.all)
 
     @torch.no_grad()
     def log_scalars(self, opt, var, loss, metric=None, step=0, split="train"):
@@ -200,8 +217,8 @@ class Model():
     def visualize(self, opt, var, step=0, split="train", val_idx=0):
         raise NotImplementedError
 
-    def save_checkpoint(self, opt, ep=0, it=0, latest=False):
-        util.save_checkpoint(opt, self, ep=ep, it=it, latest=latest)
+    def save_checkpoint(self, opt, ep=0, it=0, latest=False, sampled=None, loss=None):
+        util.save_checkpoint(opt, self, ep=ep, it=it, latest=latest, sampled=sampled, loss=loss)
         if not latest:
             log.info("checkpoint saved: ({0}) {1}, epoch {2} (iteration {3})".format(
                 opt.group, opt.name, ep, it))
@@ -227,6 +244,6 @@ class Graph(torch.nn.Module):
         loss = (pred.contiguous()-label).abs()
         return loss.mean()
 
-    def MSE_loss(self, pred, label=0):
+    def MSE_loss(self, pred, label=0, collapse=True):
         loss = (pred.contiguous()-label)**2
-        return loss.mean()
+        return loss.mean() if collapse else loss

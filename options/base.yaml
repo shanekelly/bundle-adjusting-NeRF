@@ -9,6 +9,9 @@ gpu: 0                                                      # GPU index number
 cpu: false                                                  # run only on CPU (not supported now)
 load:                                                       # load checkpoint from filename
 
+sample_loss: false
+fruit_nn: false
+
 arch: {}                                                    # architectural options
 
 data:                                                       # data options
@@ -60,4 +63,5 @@ freq:                                                       # periodic actions d
     val_previews: []                                        # also validate on these iteration numbers
     val_ptclds: false                                       # save val renders as point clouds
     val_n_log: 1                                            # log up to N val results to tensorboard
+    val_start: true                                         # validate on the first training iteration
     ckpt: 50                                                # save checkpoint (every N epochs)

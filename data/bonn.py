@@ -18,6 +18,7 @@ import camera
 from util import log, debug
 
 from im_util.transforms import tfmat_from_quat_and_translation
+from nn.predict import predict_fruitiness
 
 
 class Dataset(base.Dataset):
@@ -30,13 +31,15 @@ class Dataset(base.Dataset):
         # load/parse metadata
         meta_fname = f'{self.path}/traj_z-backwards.txt'
         self.list = []
+        self.t = []
         with open(meta_fname) as meta_file:
             self.meta = meta_file.readlines()
         for line in self.meta:
-            t_us, px, py, pz, qx, qy, qz, qw = [float(w) for w in line.split()]
-            t_ns = int(t_us * 1e6)
+            t_s, px, py, pz, qx, qy, qz, qw = [float(w) for w in line.split()]
+            self.t.append(t_s)
+            t_us = int(t_s * 1e6)
 
-            fpath = f'images/rgb_{t_ns}'
+            fpath = f'images/rgb_{t_us}'
             tfmat = tfmat_from_quat_and_translation(
                 np.array([qx, qy, qz, qw]), np.array([px, py, pz]))
 
@@ -63,6 +66,11 @@ class Dataset(base.Dataset):
         assert(not opt.data.augment)
         # pre-iterate through all samples and group together
         self.all = torch.utils.data._utils.collate.default_collate([s for s in self])
+        if opt.fruit_nn:
+            # Float mask where pixels belonging to a fruit are 1.0, pixels far from fruits are 0.0,
+            # and pixels close to fruits (approximately 10 pixels or less) are a gradient between.
+            self.all['fruitiness'] = predict_fruitiness(opt.fruit_nn, self.all['image'])
+        self.all['loss'] = None
 
     def get_all_camera_poses(self, opt):
         pose_raw_all = [torch.tensor(f["transform_matrix"], dtype=torch.float32) for f in self.list]
@@ -78,11 +86,13 @@ class Dataset(base.Dataset):
         intr, pose = self.cameras[idx] if opt.data.preload else self.get_camera(opt, idx)
         intr, pose = self.preprocess_camera(opt, intr, pose, aug=aug)
         sampled = self.sampled[idx]
+        t = self.t[idx]
         sample.update(
             image=image,
             intr=intr,
             pose=pose,
-            sampled=sampled
+            sampled=sampled,
+            t=t
         )
         return sample
 
