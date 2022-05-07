@@ -26,13 +26,22 @@ def main():
         m.load_dataset(opt, eval_split="test")
         m.build_networks(opt)
 
-        if opt.model == "barf":
+        if opt.model == "barf" and opt.eval.vid_pose:
             m.generate_videos_pose(opt)
 
-        m.restore_checkpoint(opt)
-        if opt.data.dataset in ["blender", "llff", "bonn"]:
+        if opt.data.dataset in ["blender", "llff"]:
+            m.restore_checkpoint(opt)
             m.evaluate_full(opt)
-        m.generate_videos_synthesis(opt)
+
+        if opt.eval.vid_novel_view:
+            m.restore_checkpoint(opt)
+            m.generate_videos_synthesis(opt)
+
+        if opt.eval.render_train:
+            m.render_train(opt)
+
+        if opt.model == 'barf' and opt.eval.save_pose:
+            m.save_pose_TUM(opt)
 
 
 if __name__ == "__main__":

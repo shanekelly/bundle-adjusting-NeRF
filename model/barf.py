@@ -1,7 +1,6 @@
 import numpy as np
 import os
 import sys
-import time
 import torch
 import torch.nn.functional as torch_F
 import torchvision
@@ -219,6 +218,23 @@ class Model(nerf.Model):
         os.system(
             "ffmpeg -y -r 30 -f concat -i {0} -pix_fmt yuv420p {1} >/dev/null 2>&1".format(list_fname, cam_vid_fname))
         os.remove(list_fname)
+
+    @torch.no_grad()
+    def save_pose_TUM(self, opt):
+        poses_path = "{}/poses".format(opt.output_path)
+        os.makedirs(poses_path, exist_ok=True)
+        for it in range(0, opt.max_iter+1, opt.freq.ckpt):
+            # load checkpoint (0 is random init)
+            if it != 0:
+                try:
+                    util.restore_checkpoint(opt, self, resume=it)
+                except:
+                    print(f'warning: could not find checkpoint for iteration {it:06d}!')
+            # get the camera poses
+            pose, pose_ref = self.get_all_training_poses(opt)
+            pose, pose_ref = pose.detach().cpu(), pose_ref.detach().cpu()
+            util.write_poses_TUM(pose, self.train_data.all.time, f'{poses_path}/{it:06d}.txt')
+
 
 # ============================ computation graph for forward/backprop ============================
 

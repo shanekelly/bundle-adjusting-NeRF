@@ -1,0 +1,6 @@
+_parent_: options/nerf_bonn.yaml
+
+data:
+    root: "/automount_home_students/skelly/eth/implicit-mapping/datasets/strawberry/5/last-146-frames/orbslam/front-camera/right-camera/"
+    scene: strawberry_5_146
+    train_downsample: 3

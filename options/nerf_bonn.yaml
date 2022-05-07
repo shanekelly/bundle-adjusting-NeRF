@@ -1,6 +1,5 @@
-_parent_: options/barf_llff.yaml
+_parent_: options/nerf_llff.yaml
 
-barf_c2f: [0.1,0.5]                                         # coarse-to-fine scheduling on positional encoding
 group: bonn
 
 camera:                                                     # camera options
@@ -26,7 +25,7 @@ max_iter: 50000                                             # train to maximum n
 data:
     dataset: bonn
     image_size: [480,640]                                   # input image sizes [height,width]
-    init_poses: false                                       # initialize poses using dataset trajectory estimate
+    init_poses: true                                       # initialize poses using dataset trajectory estimate
     focal: 610                                              # camera intrinsic focal length
     val_sub: 3                                              # consider a subset of N validation samples
 

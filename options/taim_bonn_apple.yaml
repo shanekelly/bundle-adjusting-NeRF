@@ -1,0 +1,8 @@
+_parent_: options/taim_bonn.yaml
+
+data:
+    root: "/automount_home_students/skelly/eth/implicit-mapping/datasets/apple/small/0/150-frames/orbslam/front-camera/right-camera/"
+    scene: apple_small_0_150
+    train_downsample: 6
+
+fruit_nn: "/automount_home_students/skelly/eth/implicit-mapping/fruit-detector-weights/apple.pth"  # sample fruit pixels more frequently that non-fruit pixels using the fruit detector NN at this path

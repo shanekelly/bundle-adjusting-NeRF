@@ -247,3 +247,6 @@ class Graph(torch.nn.Module):
     def MSE_loss(self, pred, label=0, collapse=True):
         loss = (pred.contiguous()-label)**2
         return loss.mean() if collapse else loss
+
+    def psnr(self, loss):
+        return -10 * loss.log10()

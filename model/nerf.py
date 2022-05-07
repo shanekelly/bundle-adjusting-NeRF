@@ -7,6 +7,8 @@ import torch.nn.functional as torch_F
 import torchvision
 import torchvision.transforms.functional as torchvision_F
 import tqdm
+import PIL
+import imageio
 from easydict import EasyDict as edict
 from ipdb import set_trace
 
@@ -19,6 +21,7 @@ from util import log, debug
 from . import base
 import camera
 
+from nn.predict import predict_fruitiness
 from point_cloud.rgbd import point_cloud_from_rgb_img_and_depth_img
 
 # ============================ main engine for training and evaluation ============================
@@ -204,15 +207,20 @@ class Model(base.Model):
         else:
             pose_pred, pose_GT = self.get_all_training_poses(opt)
             poses = pose_pred if opt.model == "barf" else pose_GT
-            if opt.model == "barf" and opt.data.dataset == "llff":
+            if opt.model == "barf" and opt.data.dataset in ["llff", "bonn"]:
                 _, sim3 = self.prealign_cameras(opt, pose_pred, pose_GT)
                 scale = sim3.s1/sim3.s0
             else:
                 scale = 1
-            # rotate novel views around the "center" camera of all poses
-            idx_center = (poses-poses.mean(dim=0, keepdim=True))[..., 3].norm(dim=-1).argmin()
-            pose_novel = camera.get_novel_view_poses(
-                opt, poses[idx_center], N=60, scale=scale).to(opt.device)
+            if opt.data.dataset == 'bonn':
+                # pose_novel = camera.get_novel_view_poses_long(opt, poses, N=120).to(opt.device)
+                pose_novel = camera.get_novel_view_poses(
+                    opt, poses[poses.shape[0] // 2], N=4, scale=0.01, angle_scale=0.01).to(opt.device)
+            else:
+                # rotate novel views around the "center" camera of all poses
+                idx_center = (poses-poses.mean(dim=0, keepdim=True))[..., 3].norm(dim=-1).argmin()
+                pose_novel = camera.get_novel_view_poses(
+                    opt, poses[idx_center], N=60, scale=scale).to(opt.device)
             # render the novel views
             novel_path = "{}/novel_view".format(opt.output_path)
             os.makedirs(novel_path, exist_ok=True)
@@ -238,6 +246,117 @@ class Model(base.Model):
                 "ffmpeg -y -framerate 30 -i {0}/rgb_%d.png -pix_fmt yuv420p {1} >/dev/null 2>&1".format(novel_path, rgb_vid_fname))
             os.system("ffmpeg -y -framerate 30 -i {0}/depth_%d.png -pix_fmt yuv420p {1} >/dev/null 2>&1".format(
                 novel_path, depth_vid_fname))
+
+    @torch.no_grad()
+    def render_train(self, opt, eps=1e-10):
+        if opt.eval.fruit_nn:
+            fruit_masks = predict_fruitiness(opt.eval.fruit_nn, self.train_data.all['image'],
+                                             dilate_masks=False, blur_masks=False).to(torch.bool)
+        self.graph.eval()
+        it_ckpts = tqdm.tqdm((opt.eval.render_train_ckpts if opt.eval.render_train_ckpts
+                              else range(opt.freq.ckpt, opt.max_iter+1, opt.freq.ckpt)),
+                             desc='loading ckpts')
+        for it in it_ckpts:
+            # load checkpoint (0 is random init)
+            train_dpath = f"{opt.output_path}/train_view/{it:06d}"
+            try:
+                util.restore_checkpoint(opt, self, resume=it)
+            except:
+                print(f'warning: failed to restore checkpoint for iteration {it:06d}!')
+                continue
+            os.makedirs(train_dpath, exist_ok=True)
+            pose, pose_ref = self.get_all_training_poses(opt)
+            if opt.model == 'barf':
+                pose, pose_ref = pose.detach().cpu(), pose_ref.detach().cpu()
+            else:
+                pose = pose_ref.detach().cpu()
+            util.write_poses_TUM(pose, self.train_data.all.time, f'{train_dpath}/poses.txt')
+            res = [edict() for _ in self.train_data.all.idx]
+            loader = tqdm.tqdm(self.train_loader, desc="rendering train views", leave=True)
+            for batch in loader:
+                var = edict(batch)
+                var.pose = pose[var.idx]
+                var = util.move_to_device(var, opt.device)
+                idx = var.idx.item()
+
+                rgb_fpath = f"{train_dpath}/rgb_{idx:02d}.png"
+                rgb_gt_fpath = f"{train_dpath}/rgb-gt_{idx:02d}.png"
+                depth_fpath = f"{train_dpath}/depth_{idx:02d}.png"
+                depth_cmap_fpath = f"{train_dpath}/depth-cmap_{idx:02d}.png"
+                ptcld_fpath = f'{train_dpath}/ptcld_{idx:02d}.ply'
+                fruit_mask_fpath = f'{train_dpath}/fruit_{idx:02d}.png'
+                ptcld_fruit_fpath = f'{train_dpath}/ptcld-fruit_{idx:02d}.ply'
+
+                if not (os.path.exists(rgb_fpath) and os.path.exists(rgb_gt_fpath) and
+                        os.path.exists(depth_fpath) and os.path.exists(depth_cmap_fpath) and
+                        os.path.exists(ptcld_fpath) and os.path.exists(fruit_mask_fpath) and
+                        os.path.exists(ptcld_fruit_fpath)):
+                    var = self.graph.forward(opt, var, mode="val")
+                    # evaluate view synthesis
+                    rgb_gt = var.image
+                    invdepth = (1-var.depth)/var.opacity if opt.camera.ndc else 1 / \
+                        (var.depth/var.opacity+eps)
+                    rgb = var.rgb.view(-1, opt.H, opt.W, 3).permute(0, 3, 1, 2)  # [B,3,H,W]
+                    invdepth = invdepth.view(-1, opt.H, opt.W,
+                                             1).permute(0, 3, 1, 2)  # [B,1,H,W]
+                    depth = 1 / (invdepth+eps)
+                    # dump novel views
+                    torchvision_F.to_pil_image(rgb.cpu()[0]).save(rgb_fpath)
+                    torchvision_F.to_pil_image(rgb_gt.cpu()[0]).save(rgb_gt_fpath)
+                    torchvision_F.to_pil_image(depth.cpu()[0]).save(depth_fpath)
+                    torchvision_F.to_pil_image(util_vis.preprocess_vis_image(
+                        opt, depth.cpu()[0])).save(depth_cmap_fpath)
+                    point_cloud_from_rgb_img_and_depth_img(
+                        rgb.squeeze().permute(1, 2, 0), depth.squeeze(),
+                        var.pose.squeeze(), var.intr.squeeze(), inv_pose=True,
+                        output_fpath=ptcld_fpath)
+                    if opt.eval.fruit_nn:
+                        fruit_mask = fruit_masks[idx]
+                        depth_fruit = depth.clone()
+                        depth_fruit[:, :, ~fruit_mask] = torch.nan
+                        torchvision_F.to_pil_image(fruit_mask.cpu().to(
+                            torch.float)).save(fruit_mask_fpath)
+                        point_cloud_from_rgb_img_and_depth_img(
+                            rgb.squeeze().permute(1, 2, 0), depth_fruit.squeeze(),
+                            var.pose.squeeze(), var.intr.squeeze(), inv_pose=True,
+                            output_fpath=ptcld_fruit_fpath)
+                    rgb_gt = rgb_gt.cpu().squeeze()
+                    rgb = rgb.cpu().squeeze()
+                else:
+                    rgb = torchvision_F.to_tensor(PIL.Image.fromarray(imageio.imread(rgb_fpath)))
+                    rgb_gt = torchvision_F.to_tensor(
+                        PIL.Image.fromarray(imageio.imread(rgb_gt_fpath)))
+                    fruit_mask = torchvision_F.to_tensor(
+                        PIL.Image.fromarray(imageio.imread(fruit_mask_fpath))).to(torch.bool)
+
+                fruit_mask = fruit_mask.squeeze()
+                loss_img = ((rgb_gt - rgb) ** 2).mean(0)
+                loss = loss_img.flatten()
+                loss_fruit = ((rgb_gt[:, fruit_mask] - rgb[:, fruit_mask]) ** 2).mean(0)
+                loss_fruit_img = torch.zeros(opt.H, opt.W)
+                loss_fruit_img[fruit_mask] = loss_fruit
+                torchvision_F.to_pil_image(util_vis.preprocess_vis_image(
+                    opt, loss_img.cpu())).save(f'{train_dpath}/loss_{idx:02}.png')
+                torchvision_F.to_pil_image(util_vis.preprocess_vis_image(
+                    opt, loss_fruit_img.cpu())).save(f'{train_dpath}/loss-fruit_{idx:02}.png')
+                res[idx].update(loss=loss, loss_fruit=loss_fruit)
+
+            def quant_str(l):
+                return ' '.join([
+                    str(q) for q in l.quantile(torch.arange(0.0, 1.05, 0.05)).tolist() +
+                    [l.mean().item()]])
+
+            with open(f'{train_dpath}/loss_individual_{it:06d}.txt', 'w') as f:
+                for r in res:
+                    f.write(quant_str(r.loss) + '\n')
+            with open(f'{train_dpath}/loss_all_{it:06d}.txt', 'w') as f:
+                f.write(quant_str(torch.cat([r.loss for r in res])) + '\n')
+
+            with open(f'{train_dpath}/loss-fruit_individual_{it:06d}.txt', 'w') as f:
+                for r in res:
+                    f.write(quant_str(r.loss_fruit) + '\n')
+            with open(f'{train_dpath}/loss-fruit_all_{it:06d}.txt', 'w') as f:
+                f.write(quant_str(torch.cat([r.loss_fruit for r in res])) + '\n')
 
 # ============================ computation graph for forward/backprop ============================
 
@@ -376,31 +495,38 @@ class Graph(base.Graph):
         return depth_samples[..., None]  # [B,HW,Nf,1]
 
     def sample_prob(self, opt, var):
-        if not (opt.fruit_nn or opt.sample_loss):
+        if not (opt.fruit_nn or opt.sample_loss) or 'loss' not in var:
             # var.sample_prob = torch.ones(var.image.shape[0], opt.H, opt.W)
             var.sample_prob = torch.tensor(1, dtype=torch.float, device=opt.device).expand(
                 var.image.shape[0], opt.H, opt.W)
             return var.sample_prob.view(-1)
 
         var.sample_prob = None
-        if opt.fruit_nn:
-            var.sample_prob = var.fruitiness.clone()
         if opt.sample_loss:
-            if var.loss is not None:  # loss dist already initialized
+            if var.loss is not None:  # Loss dist already initialized.
                 loss_prob = torchvision_F.gaussian_blur(var.loss, kernel_size=11)
-                # loss_prob = (loss_prob / loss_prob.max()).pow(2)
                 loss_prob_min = loss_prob.min()
                 loss_prob_max = loss_prob.max()
                 loss_prob_range = loss_prob_max - loss_prob_min
                 if loss_prob_range != 0:
-                    # Scale between 0.01 and 1.00.
-                    loss_prob = ((loss_prob - loss_prob_min) / (loss_prob_range)) * 0.99 + 0.01
+                    # Scale between opt.loss_min and 1.00.
+                    loss_prob = (((loss_prob - loss_prob_min) / (loss_prob_range)) *
+                                 (1 - opt.loss_min) + opt.loss_min)
                 if var.sample_prob is None:
                     var.sample_prob = loss_prob
                 else:
                     var.sample_prob += loss_prob
             elif var.sample_prob is None:
-                var.sample_prob = torch.ones(var.image.shape[0], opt.H, opt.W)
+                var.sample_prob = torch.ones(var.image.shape[0], opt.H, opt.W, device=opt.device)
+        if opt.fruit_nn:
+            # Scale fruitiness such that a fruit pixel is 1.0 and a non-fruit pixel is
+            # 1 / opt.fruit_weight.
+            non_fruit_weight = 1 / opt.fruit_weight
+            fruit_prob = var.fruitiness * (1 - non_fruit_weight) + non_fruit_weight
+            if var.sample_prob is None:
+                var.sample_prob = fruit_prob
+            else:
+                var.sample_prob *= fruit_prob
         return var.sample_prob.view(-1)
 
 
@@ -517,7 +643,7 @@ class NeRF(torch.nn.Module):
         sigma_delta = density_samples*dist_samples  # [B,HW,N]
         alpha = 1-(-sigma_delta).exp_()  # [B,HW,N]
         T = (-torch.cat([torch.zeros_like(sigma_delta[..., :1]),
-             sigma_delta[..., :-1]], dim=1).cumsum(dim=1)).exp_()  # [B,HW,N]
+                         sigma_delta[..., :-1]], dim=1).cumsum(dim=1)).exp_()  # [B,HW,N]
         prob = (T*alpha)[..., None]  # [B,HW,N,1]
         # integrate RGB and depth weighted by probability
         depth = (depth_samples*prob).sum(dim=1)  # [B,HW,1]

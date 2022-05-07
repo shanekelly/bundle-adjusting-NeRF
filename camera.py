@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as torch_F
 import collections
 from easydict import EasyDict as edict
+from ipdb import set_trace
 
 import util
 from util import log, debug
@@ -329,9 +330,9 @@ def procrustes_analysis(X0, X1):  # [N,3]
     return sim3
 
 
-def get_novel_view_poses(opt, pose_anchor, N=60, scale=1):
+def get_novel_view_poses(opt, pose_anchor, N=60, scale=1, angle_scale=1):
     # create circular viewpoints (small oscillations)
-    theta = torch.arange(N)/N*2*np.pi
+    theta = (torch.arange(N)/2*np.pi - np.pi) / N * angle_scale
     R_x = angle_to_rotation_matrix((theta.sin()*0.05).asin(), "X")
     R_y = angle_to_rotation_matrix((theta.cos()*0.05).asin(), "Y")
     pose_rot = pose(R=R_y@R_x)
@@ -340,3 +341,16 @@ def get_novel_view_poses(opt, pose_anchor, N=60, scale=1):
     pose_oscil = pose.compose([pose_shift, pose_rot, pose_shift2])
     pose_novel = pose.compose([pose_oscil, pose_anchor.cpu()[None]])
     return pose_novel
+
+
+def get_novel_view_poses_long(opt, poses, N=60):
+    t_0 = poses[0, :, -1]
+    t_n = poses[-1, :, -1]
+    t_diff = (t_n - t_0) / (N - 1)
+    R = poses[0, :, :3]
+    poses_novel = []
+    for idx in range(N):
+        t = t_0 + idx * t_diff
+        poses_novel.append(pose(R=R, t=t))
+    poses_novel = torch.stack(poses_novel, dim=0)
+    return poses_novel

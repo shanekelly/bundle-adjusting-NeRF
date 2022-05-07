@@ -3,13 +3,14 @@ _parent_: options/barf_bonn.yaml
 arch:                                                       # architectural optionss
     posenc:                                                 # positional encoding:
         gpe: true                                           # use Gaussian positional encoding
+
+data:
+    init_poses: true                                        # initialize poses using dataset trajectory estimate
+
 optim:
     lr_pose: 1.0e-6                                         # learning rate of camera poses
     lr_pose_end: 1.0e-8                                     # terminal learning rate of camera poses (only used with sched_pose.type=ExponentialLR)
-data:                                                       # data options
-    root: "/automount_home_students/skelly/eth/implicit-mapping/datasets/strawberry/5/last-146-frames/orbslam/front-camera/right-camera/"
-    train_downsample: 3
-    # root: "/automount_home_students/skelly/eth/implicit-mapping/datasets/strawberry/5/5-frames/orbslam/front-camera/right-camera/"
 
-sample_loss: true
-fruit_nn: "/automount_home_students/skelly/eth/implicit-mapping/fruit-detector-weights/strawberry.pth"
+sample_loss: true                                           # sample high-loss pixels more frequently
+loss_min: 0.01                                              # min pixel sample prob for loss-based sampling
+fruit_weight: 10                                            # (sample prob fruit pixel) / (sample prob non-fruit pixel)

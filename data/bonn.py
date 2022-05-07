@@ -31,20 +31,23 @@ class Dataset(base.Dataset):
         # load/parse metadata
         meta_fname = f'{self.path}/traj_z-backwards.txt'
         self.list = []
-        self.t = []
         with open(meta_fname) as meta_file:
             self.meta = meta_file.readlines()
         for line in self.meta:
             t_s, px, py, pz, qx, qy, qz, qw = [float(w) for w in line.split()]
-            self.t.append(t_s)
+
             t_us = int(t_s * 1e6)
-
             fpath = f'images/rgb_{t_us}'
-            tfmat = tfmat_from_quat_and_translation(
-                np.array([qx, qy, qz, qw]), np.array([px, py, pz]))
+            if opt.data.init_poses:
+                tfmat = tfmat_from_quat_and_translation(
+                    np.array([qx, qy, qz, qw]), np.array([px, py, pz]))
+            else:
+                tfmat = np.eye(4)
 
-            self.list.append({'file_path': fpath, 'transform_matrix': tfmat})
-        self.focal = 610
+            self.list.append({'file_path': fpath, 'transform_matrix': tfmat, 'time': t_s})
+        self.focal = opt.data.focal
+        if downsample:
+            self.list = self.list[::downsample]
         if subset:
             if split == 'val':
                 # Split the list into N+1 even pieces and then select a validation image at each
@@ -54,12 +57,11 @@ class Dataset(base.Dataset):
                 self.list = [self.list[idx] for idx in val_idxs]
             else:
                 self.list = self.list[:subset]
-        if downsample:
-            self.list = self.list[::downsample]
         # preload dataset
         if opt.data.preload:
             self.images = self.preload_threading(opt, self.get_image)
             self.cameras = self.preload_threading(opt, self.get_camera, data_str="cameras")
+            self.times = self.preload_threading(opt, self.get_time)
         self.sampled = torch.zeros(len(self.list), self.raw_H, self.raw_W, dtype=torch.int64)
 
     def prefetch_all_data(self, opt):
@@ -69,7 +71,8 @@ class Dataset(base.Dataset):
         if opt.fruit_nn:
             # Float mask where pixels belonging to a fruit are 1.0, pixels far from fruits are 0.0,
             # and pixels close to fruits (approximately 10 pixels or less) are a gradient between.
-            self.all['fruitiness'] = predict_fruitiness(opt.fruit_nn, self.all['image'])
+            self.all['fruitiness'] = predict_fruitiness(opt.fruit_nn,
+                                                        self.all['image']).to(opt.device)
         self.all['loss'] = None
 
     def get_all_camera_poses(self, opt):
@@ -86,13 +89,13 @@ class Dataset(base.Dataset):
         intr, pose = self.cameras[idx] if opt.data.preload else self.get_camera(opt, idx)
         intr, pose = self.preprocess_camera(opt, intr, pose, aug=aug)
         sampled = self.sampled[idx]
-        t = self.t[idx]
+        time = self.times[idx] if opt.data.preload else self.get_time(opt, idx)
         sample.update(
             image=image,
             intr=intr,
             pose=pose,
             sampled=sampled,
-            t=t
+            time=time
         )
         return sample
 
@@ -101,6 +104,10 @@ class Dataset(base.Dataset):
         # directly using PIL.Image.open() leads to weird corruption....
         image = PIL.Image.fromarray(imageio.imread(image_fname))
         return image
+
+    def get_time(self, opt, idx):
+        time = self.list[idx]['time']
+        return time
 
     def preprocess_image(self, opt, image, aug=None):
         image = super().preprocess_image(opt, image, aug=aug)

@@ -12,8 +12,9 @@ import termcolor
 import socket
 import contextlib
 from easydict import EasyDict as edict
-
 from ipdb import set_trace
+
+from im_util.transforms import quat_and_translation_from_tfmat
 
 # convert to colored strings
 
@@ -173,7 +174,7 @@ def restore_checkpoint(opt, model, load_name=None, resume=False):
     assert((load_name is None) == (resume is not False))
     if resume:
         load_name = "{0}/model.ckpt".format(opt.output_path) if resume is True else \
-                    "{0}/model/{1}.ckpt".format(opt.output_path, resume)
+            "{0}/model/{1:06d}.ckpt".format(opt.output_path, resume)
     checkpoint = torch.load(load_name, map_location=opt.device)
     # load individual (possibly partial) children modules
     for name, child in model.graph.named_children():
@@ -258,3 +259,14 @@ def colorcode_to_number(code):
     ords = [n-48 if n < 58 else n-87 for n in ords]
     rgb = (ords[0]*16+ords[1], ords[2]*16+ords[3], ords[4]*16+ords[5])
     return rgb
+
+
+def write_poses_TUM(poses, times, path):
+    poses = poses.numpy()
+    tum_lines = []
+    for pose, t in zip(poses, times):
+        tfmat = np.linalg.inv(np.concatenate((pose, np.array([0, 0, 0, 1])[None])))
+        (qx, qy, qz, qw), (px, py, pz) = quat_and_translation_from_tfmat(tfmat)
+        tum_line = f'{t} {px} {py} {pz} {qx} {qy} {qz} {qw}'
+        tum_lines.append(tum_line)
+    open(path, 'w').write('\n'.join(tum_lines))

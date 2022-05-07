@@ -1,0 +1,8 @@
+_parent_: options/taim_bonn.yaml
+
+data:
+    root: "/automount_home_students/skelly/eth/implicit-mapping/datasets/strawberry/5/last-146-frames/orbslam/front-camera/right-camera/"
+    scene: strawberry_5_146
+    train_downsample: 3
+
+fruit_nn: "/automount_home_students/skelly/eth/implicit-mapping/fruit-detector-weights/strawberry.pth"  # sample fruit pixels more frequently that non-fruit pixels using the fruit detector NN at this path
