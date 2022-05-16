@@ -336,8 +336,10 @@ def get_novel_view_poses(opt, pose_anchor, N=60, scale=1, angle_scale=1):
     R_x = angle_to_rotation_matrix((theta.sin()*0.05).asin(), "X")
     R_y = angle_to_rotation_matrix((theta.cos()*0.05).asin(), "Y")
     pose_rot = pose(R=R_y@R_x)
-    pose_shift = pose(t=[0, 0, -4*scale])
-    pose_shift2 = pose(t=[0, 0, 3.8*scale])
+    # pose_shift = pose(t=[0, 0, -4*scale])
+    # pose_shift2 = pose(t=[0, 0, 3.8*scale])
+    pose_shift = pose(t=[-4*scale, 0, 0])
+    pose_shift2 = pose(t=[3.8*scale, 0, 0])
     pose_oscil = pose.compose([pose_shift, pose_rot, pose_shift2])
     pose_novel = pose.compose([pose_oscil, pose_anchor.cpu()[None]])
     return pose_novel
@@ -354,3 +356,36 @@ def get_novel_view_poses_long(opt, poses, N=60):
         poses_novel.append(pose(R=R, t=t))
     poses_novel = torch.stack(poses_novel, dim=0)
     return poses_novel
+
+
+def normalize(x):
+    return x / np.linalg.norm(x)
+
+
+def viewmatrix(z, up, pos):
+    vec2 = normalize(z)
+    vec1_avg = up
+    vec0 = normalize(np.cross(vec1_avg, vec2))
+    vec1 = normalize(np.cross(vec2, vec0))
+    m = np.stack([vec0, vec1, vec2, pos], 1)
+    return m
+
+
+def render_path_spiral(c2w_in, up, rads, focal, zrate, rots, N):
+    c2w = np.linalg.inv(np.concatenate((c2w_in.cpu().numpy(), np.array([0, 0, 0, 1])[None])))
+    render_poses = []
+    rads = np.array(list(rads) + [1.])
+
+    for theta in np.linspace(0., 2. * np.pi * rots, N+1)[:-1]:
+        c = np.dot(c2w[:3, :4], np.array(
+            [np.cos(theta), -np.sin(theta), -np.sin(theta*zrate), 1.]) * rads)
+        z = normalize(c - np.dot(c2w[:3, :4], np.array([0, 0, -focal, 1.])))
+        render_poses.append(viewmatrix(z, up, c))
+
+    poses = []
+    for render_pose in render_poses:
+        p = np.linalg.inv(np.concatenate((render_pose, np.array([0, 0, 0, 1])[None])))
+        poses.append(p)
+    poses = torch.from_numpy(np.stack(poses)[:, :3]).to(c2w_in.device)
+
+    return poses

@@ -214,8 +214,13 @@ class Model(base.Model):
                 scale = 1
             if opt.data.dataset == 'bonn':
                 # pose_novel = camera.get_novel_view_poses_long(opt, poses, N=120).to(opt.device)
-                pose_novel = camera.get_novel_view_poses(
-                    opt, poses[poses.shape[0] // 2], N=4, scale=0.01, angle_scale=0.01).to(opt.device)
+                # pose_novel = camera.get_novel_view_poses(
+                #     opt, poses[poses.shape[0] // 2], N=4, scale=0.01, angle_scale=0.01).to(opt.device)
+                # center_pose = poses[poses.shape[0] // 2]
+                center_pose = poses[16]
+                pose_novel = camera.render_path_spiral(
+                    center_pose, np.array([0, -1, 0]), np.array([0.075, 0.0075, 0.0]),
+                    4, 0.5, 1, 120)
             else:
                 # rotate novel views around the "center" camera of all poses
                 idx_center = (poses-poses.mean(dim=0, keepdim=True))[..., 3].norm(dim=-1).argmin()
